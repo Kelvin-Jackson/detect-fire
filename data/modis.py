@@ -1,0 +1,107 @@
+import io
+import pandas as pd
+import requests
+import psycopg2
+from psycopg2 import sql
+from psycopg2.extras import execute_values
+
+def load_data_from_api():
+    url = "https://firms.modaps.eosdis.nasa.gov/api/area/csv/3997c926c300d2de23e48faa0f5fc587/VIIRS_SNPP_NRT/world/1/2025-05-18"
+    response = requests.get(url)
+    if response.status_code != 200:
+        raise Exception(f"Failed to fetch data: {response.status_code} - {response.text}")
+    return pd.read_csv(io.StringIO(response.text), sep=',')
+
+def test_output(output):
+    assert output is not None, 'The output is undefined'
+    assert not output.empty, 'The output DataFrame is empty'
+    print("✅ Test passed: Data loaded successfully.")
+
+def clean_data(df):
+    # Rename columns
+    df.rename(columns={
+        'latitude': 'fire_lat',
+        'longitude': 'fire_long',
+        'frp': 'fire_radiative_power'
+    }, inplace=True)
+
+    # Handle any invalid time data
+    df['acq_time'] = df['acq_time'].astype(str).str.zfill(4)  # Pad with zeros if needed
+    df['acq_time'] = df['acq_time'].str.replace(r'[^0-9]', '', regex=True)  # Remove non-numeric chars
+    df['acq_time'] = df['acq_time'].str.zfill(4)  # Ensure 4 digits
+
+    # Convert acq_time to HH:MM format
+    df['acq_time'] = df['acq_time'].str[:2] + ':' + df['acq_time'].str[2:]
+
+    # Create a combined timestamp column
+    df['modis_timestamp'] = pd.to_datetime(df['acq_date'] + ' ' + df['acq_time'], format='%Y-%m-%d %H:%M')
+
+    return df
+
+def drop_table_if_exists(conn, table_name='modis_data'):
+    with conn.cursor() as cur:
+        cur.execute(sql.SQL("DROP TABLE IF EXISTS {}").format(sql.Identifier(table_name)))
+        conn.commit()
+
+def create_table_from_df(conn, df, table_name='modis_data'):
+    # Map pandas dtypes to PostgreSQL types
+    dtype_mapping = {
+        'object': 'TEXT',
+        'int64': 'BIGINT',
+        'float64': 'DOUBLE PRECISION',
+        'datetime64[ns]': 'TIMESTAMP',
+        'bool': 'BOOLEAN'
+    }
+
+    columns_with_types = []
+    for col, dtype in df.dtypes.items():
+        pg_type = dtype_mapping.get(str(dtype), 'TEXT')  # default TEXT
+        columns_with_types.append(f"{col} {pg_type}")
+
+    columns_sql = ", ".join(columns_with_types)
+
+    create_query = sql.SQL("CREATE TABLE {} ({})").format(
+        sql.Identifier(table_name),
+        sql.SQL(columns_sql)
+    )
+
+    with conn.cursor() as cur:
+        cur.execute(create_query)
+        conn.commit()
+
+def insert_data_to_db(conn, df, table_name='modis_data'):
+    cols = list(df.columns)
+    query = sql.SQL('INSERT INTO {} ({}) VALUES %s').format(
+        sql.Identifier(table_name),
+        sql.SQL(', ').join(map(sql.Identifier, cols))
+    )
+
+    values = [tuple(x) for x in df[cols].to_numpy()]
+
+    with conn.cursor() as cur:
+        execute_values(cur, query.as_string(conn), values)
+        conn.commit()
+
+if __name__ == "__main__":
+    data = load_data_from_api()
+    test_output(data)
+
+    cleaned_data = clean_data(data)
+
+    conn_params = {
+        "host": "172.22.0.2",
+        "dbname": "fire_sensor_db",
+        "user": "postgres",
+        "password": "postgres",
+        "port": 5432,
+    }
+
+    conn = psycopg2.connect(**conn_params)
+
+    drop_table_if_exists(conn, 'modis_data')          # DROP if exists
+    create_table_from_df(conn, cleaned_data, 'modis_data')  # CREATE new table from cleaned data
+    insert_data_to_db(conn, cleaned_data, 'modis_data')     # INSERT cleaned data
+
+    print("✅ Data inserted into PostgreSQL table 'modis_data'.")
+    conn.close()
+

@@ -1,0 +1,104 @@
+# version: '3.8'
+
+# services:
+#   postgres:
+#     image: postgres:latest
+#     container_name: fire-detector-postgres
+#     environment:
+#       POSTGRES_USER: postgres
+#       POSTGRES_PASSWORD: postgres
+#       POSTGRES_DB: fire_sensor_db
+#     volumes:
+#       - postgres_data:/var/lib/postgresql/data
+#     ports:
+#       - "5432:5432"
+#     networks:
+#       - compose-quickstart_default
+
+# volumes:
+#   postgres_data:
+
+# networks:
+#   compose-quickstart_default:
+#     external: true
+
+# version: '3.8'
+
+# services:
+#   postgres:
+#     image: postgres:latest
+#     container_name: fire-detector-postgres
+#     environment:
+#       POSTGRES_USER: postgres
+#       POSTGRES_PASSWORD: postgres
+#       POSTGRES_DB: fire_sensor_db
+#     volumes:
+#       - postgres_data:/var/lib/postgresql/data
+#     ports:
+#       - "5432:5432"
+#     networks:
+#       - compose-quickstart_default
+
+#   adminer:
+#     image: adminer
+#     container_name: fire-detector-adminer
+#     restart: always
+#     ports:
+#       - "8080:8080"
+#     networks:
+#       - compose-quickstart_default
+
+# volumes:
+#   postgres_data:
+
+# networks:
+#   compose-quickstart_default:
+#     external: true
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:latest
+    container_name: fire-detector-postgres
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: fire_sensor_db
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    networks:
+      - compose-quickstart_default
+
+  adminer:
+    image: adminer
+    container_name: fire-detector-adminer
+    restart: always
+    ports:
+      - "8080:8080"
+    networks:
+      - compose-quickstart_default
+
+  sqlpad:
+    image: sqlpad/sqlpad:latest
+    container_name: fire-detector-sqlpad
+    environment:
+      SQLPAD_ADMIN: admin
+      SQLPAD_ADMIN_PASSWORD: admin123
+      SQLPAD_DB_PATH: /var/lib/sqlpad
+      SQLPAD_DEFAULT_CONNECTION_DRIVER: postgres
+    volumes:
+      - sqlpad_data:/var/lib/sqlpad
+    ports:
+      - "3000:3000"
+    networks:
+      - compose-quickstart_default
+
+volumes:
+  postgres_data:
+  sqlpad_data:
+
+networks:
+  compose-quickstart_default:
+    external: true

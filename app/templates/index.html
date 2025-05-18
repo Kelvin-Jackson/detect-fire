@@ -1,0 +1,167 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <title>Fire Detection API Client</title>
+    <style>
+        /* Reset some default styles */
+        * {
+            box-sizing: border-box;
+        }
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: #f0f4f8;
+            margin: 0;
+            padding: 2rem;
+            display: flex;
+            justify-content: center;
+            min-height: 100vh;
+        }
+        .container {
+            background: white;
+            padding: 2rem 2.5rem;
+            border-radius: 12px;
+            box-shadow: 0 8px 20px rgba(0,0,0,0.1);
+            max-width: 600px;
+            width: 100%;
+        }
+        h1 {
+            margin-top: 0;
+            margin-bottom: 0.5rem;
+            color: #2c3e50;
+            text-align: center;
+            font-weight: 700;
+        }
+        p {
+            color: #555;
+            text-align: center;
+            margin-top: 0;
+            margin-bottom: 1.5rem;
+            font-size: 1.1rem;
+        }
+        textarea {
+            width: 100%;
+            height: 220px;
+            font-family: 'Courier New', Courier, monospace;
+            font-size: 15px;
+            padding: 1rem;
+            border-radius: 8px;
+            border: 1.8px solid #d1d9e6;
+            resize: vertical;
+            transition: border-color 0.3s ease;
+        }
+        textarea:focus {
+            outline: none;
+            border-color: #007BFF;
+            box-shadow: 0 0 8px #007BFFaa;
+        }
+        button {
+            display: block;
+            width: 100%;
+            padding: 14px 0;
+            font-size: 18px;
+            font-weight: 600;
+            color: white;
+            background: linear-gradient(90deg, #007BFF, #0056b3);
+            border: none;
+            border-radius: 8px;
+            margin-top: 1.25rem;
+            cursor: pointer;
+            transition: background 0.3s ease;
+            box-shadow: 0 4px 12px rgba(0,123,255,0.4);
+        }
+        button:hover {
+            background: linear-gradient(90deg, #0056b3, #003f7f);
+            box-shadow: 0 6px 18px rgba(0,86,179,0.6);
+        }
+        .result {
+            margin-top: 1.8rem;
+            padding: 1rem 1.2rem;
+            border-radius: 10px;
+            background: #eef6ff;
+            border: 1px solid #a9c5ff;
+            font-size: 1.1rem;
+            color: #2a4365;
+            min-height: 50px;
+            line-height: 1.4;
+            word-wrap: break-word;
+            white-space: pre-wrap;
+        }
+        .error {
+            color: #c53030;
+            font-weight: 600;
+        }
+        @media (max-width: 640px) {
+            body {
+                padding: 1rem;
+            }
+            .container {
+                padding: 1.5rem 1.75rem;
+            }
+            button {
+                font-size: 16px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Fire Detection API</h1>
+        <p>Paste JSON payload below and click <em>Detect</em>:</p>
+        <textarea id="payload" placeholder='{
+  "smoke_value": 0.1,
+  "fire_lat": 34.5,
+  "fire_long": -117.2,
+  "bright_ti4": 320.5,
+  "fire_radiative_power": 10,
+  "sensor_timestamp": "2025-05-18T10:30:00",
+  "modis_timestamp": "2025-05-18T10:00:00",
+  "confidence": "high",
+  "daynight": "day"
+}'></textarea>
+        <button onclick="detectFire()">Detect</button>
+
+        <div class="result" id="result"></div>
+    </div>
+
+    <script>
+        async function detectFire() {
+            const resultDiv = document.getElementById("result");
+            resultDiv.textContent = "Detecting...";
+
+            let payloadText = document.getElementById("payload").value;
+
+            let payload;
+            try {
+                payload = JSON.parse(payloadText);
+            } catch (err) {
+                resultDiv.innerHTML = `<span class="error">Invalid JSON: ${err.message}</span>`;
+                return;
+            }
+
+            try {
+                const response = await fetch("/predict", {
+                    method: "POST",
+                    headers: {
+                        "Content-Type": "application/json"
+                    },
+                    body: JSON.stringify(payload)
+                });
+
+                const data = await response.json();
+
+                if (!response.ok) {
+                    resultDiv.innerHTML = `<span class="error">Error: ${data.error}</span>`;
+                } else {
+                    resultDiv.innerHTML = `
+                        <strong>Prediction:</strong> ${data.fire_detected === 1 ? "🔥 Fire Detected" : "✅ No Fire"}<br/>
+                        <strong>Probability:</strong> ${(data.probability * 100).toFixed(2)}%
+                    `;
+                }
+            } catch (error) {
+                resultDiv.innerHTML = `<span class="error">Request failed: ${error.message}</span>`;
+            }
+        }
+    </script>
+</body>
+</html>

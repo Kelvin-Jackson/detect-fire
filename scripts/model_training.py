@@ -1,0 +1,180 @@
+import os
+import pandas as pd
+import joblib
+from dotenv import load_dotenv
+from sqlalchemy import create_engine,text
+from imblearn.over_sampling import SMOTE
+from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import LabelEncoder
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.metrics import accuracy_score, classification_report
+
+
+# Create the directory if it doesn't exist
+os.makedirs("encoders", exist_ok=True)
+
+# Load environment variables from .env file
+load_dotenv()
+
+def load_data_from_postgres(user, password, host, port, database, table_name):
+    # Build the database URI
+    database_uri = f"postgresql://{user}:{password}@{host}:{port}/{database}"
+
+    # Create the SQLAlchemy engine
+    engine = create_engine(database_uri)
+
+    # Establish a connection to the database
+    with engine.connect() as connection:
+        # Use text() to create an executable SQL statement
+        query = text(f"SELECT * FROM {table_name}")
+        result = connection.execute(query)
+        df = pd.DataFrame(result.fetchall(), columns=result.keys())  # Convert to DataFrame
+
+    return df
+
+
+def preprocess_data(df):
+    # Step 1: Handle missing data
+    df["fire_lat"].fillna(df["fire_lat"].median(), inplace=True)
+    df["fire_long"].fillna(df["fire_long"].median(), inplace=True)
+    df["bright_ti4"].fillna(df["bright_ti4"].median(), inplace=True)
+    df["fire_radiative_power"].fillna(df["fire_radiative_power"].median(), inplace=True)
+    df["confidence"].fillna(df["confidence"].mode()[0], inplace=True)
+    df["daynight"].fillna(df["daynight"].mode()[0], inplace=True)
+
+    # Step 2: Convert timestamp columns to datetime if not already
+    df["timestamp"] = pd.to_datetime(df["timestamp"])
+    df["modis_timestamp"] = pd.to_datetime(df["modis_timestamp"])
+
+    # Step 3: Feature Engineering from timestamps
+    df["sensor_hour"] = df["timestamp"].dt.hour
+    df["sensor_dayofweek"] = df["timestamp"].dt.dayofweek
+    df["sensor_day"] = df["timestamp"].dt.day
+
+    df["modis_hour"] = df["modis_timestamp"].dt.hour
+    df["modis_dayofweek"] = df["modis_timestamp"].dt.dayofweek
+    df["modis_day"] = df["modis_timestamp"].dt.day
+
+    df["timestamp_diff"] = (df["timestamp"] - df["modis_timestamp"]).dt.total_seconds() / 60
+    df["timestamp_diff"].fillna(0, inplace=True)
+
+    # Step 4: Encode categorical features using separate encoders
+    confidence_encoder = LabelEncoder()
+    df["confidence_encoded"] = confidence_encoder.fit_transform(df["confidence"])
+
+    daynight_encoder = LabelEncoder()
+    df["daynight_encoded"] = daynight_encoder.fit_transform(df["daynight"])
+
+    # Save the encoders for use in the prediction app
+    joblib.dump(confidence_encoder, "encoders/confidence_encoder.pkl")
+    joblib.dump(daynight_encoder, "encoders/daynight_encoder.pkl")
+
+    return df
+
+# Function to apply SMOTE to the training data
+def apply_smote(X_train, y_train):
+    smote = SMOTE(random_state=42)
+    if y_train.value_counts().min() > 1:
+        X_train_smote, y_train_smote = smote.fit_resample(X_train, y_train)
+        print("SMOTE applied successfully.")
+        return X_train_smote, y_train_smote
+    else:
+        print("SMOTE cannot be applied. Insufficient samples in the minority class.")
+        return X_train, y_train
+
+
+# Function to train a Random Forest classifier
+def train_random_forest(X_train, y_train):
+    rf_classifier_weighted = RandomForestClassifier(
+        random_state=42, class_weight="balanced"
+    )
+    rf_classifier_weighted.fit(X_train, y_train)
+    return rf_classifier_weighted
+
+
+# Function to evaluate the model with adjusted threshold
+def evaluate_model_with_threshold(rf_classifier, X_test, y_test, threshold=0.1):
+    y_pred_prob = rf_classifier.predict_proba(X_test)[:, 1]
+    y_pred_adjusted = (y_pred_prob >= threshold).astype(int)
+
+    accuracy_adjusted = accuracy_score(y_test, y_pred_adjusted)
+    print(f"Accuracy with adjusted threshold: {accuracy_adjusted:.4f}")
+    print("Classification Report with adjusted threshold:")
+    print(classification_report(y_test, y_pred_adjusted))
+
+
+# Function to save the model
+def save_model(model, filename):
+    # Ensure the 'models' directory exists
+    os.makedirs(os.path.dirname(filename), exist_ok=True)
+
+    # Save the model
+    joblib.dump(model, filename)
+    print(f"Model saved as {filename}")
+
+
+# Function to load the saved model
+def load_model(filename):
+    model = joblib.load(filename)
+    print(f"Model loaded from {filename}")
+    return model
+
+
+# Function to make predictions using the loaded model
+def make_predictions(model, X_test):
+    predictions = model.predict(X_test)
+    return predictions
+
+
+def main():
+    # Load environment variables
+    user = os.getenv("POSTGRES_USER")
+    password = os.getenv("POSTGRES_PASSWORD")
+    host = os.getenv("POSTGRES_HOST")
+    port = os.getenv("POSTGRES_PORT")
+    database = os.getenv("POSTGRES_DB")
+    table_name = "prediction_data"
+
+    df = load_data_from_postgres(user, password, host, port, database, table_name)
+    print(df.columns)
+
+    # Preprocess data
+    df = preprocess_data(df)
+
+    # Drop original datetime and raw categorical columns after encoding and feature engineering
+    cols_to_drop = ["timestamp", "modis_timestamp", "confidence", "daynight"]
+    cols_to_drop = [col for col in cols_to_drop if col in df.columns]
+    final_df = df.drop(columns=cols_to_drop)
+
+    # Prepare features and target
+    X = final_df.drop(columns=["fire_detected"])
+    y = final_df["fire_detected"]
+
+    # Split the data
+    X_train, X_test, y_train, y_test = train_test_split(
+        X, y, test_size=0.2, random_state=42
+    )
+    
+    print(f"x_test_columns: {X_test.columns}")
+
+    # Apply SMOTE - now with only numeric features
+    X_train_smote, y_train_smote = apply_smote(X_train, y_train)
+
+    # Train the model
+    rf_classifier = train_random_forest(X_train_smote, y_train_smote)
+
+    # Save the model
+    save_model(rf_classifier, "models/random_forest_model.pkl")
+
+    # Evaluate the model
+    evaluate_model_with_threshold(rf_classifier, X_test, y_test, threshold=0.1)
+
+    # Load and predict
+    loaded_model = load_model("models/random_forest_model.pkl")
+    predictions = make_predictions(loaded_model, X_test)
+    print(f"Predictions: {predictions}")
+
+
+# Run the main function
+if __name__ == "__main__":
+    main()
